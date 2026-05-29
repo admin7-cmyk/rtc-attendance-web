@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+:root {
+  --rtc-bg: #eaf7fa;
+  --rtc-card: #ffffff;
+  --rtc-line: #d7e7ee;
+  --rtc-text: #123142;
+  --rtc-muted: #607887;
+
+  --rtc-primary: #23a6b8;
+  --rtc-primary-dark: #138799;
+
+  --rtc-green: #26b36b;
+  --rtc-green-dark: #16945a;
+
+  --rtc-red: #ef5350;
+  --rtc-red-dark: #d8433f;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--rtc-bg);
+  color: var(--rtc-text);
+  font-family:
+    "Sarabun",
+    "Noto Sans Thai",
+    "Segoe UI",
+    Tahoma,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+select,
+textarea {
+  outline: none;
+}
+
+/* กันกรณี Tailwind บางคลาสโดน browser แสดงดิบ */
+main {
+  background: var(--rtc-bg);
+}
+
+/* ปุ่มหลัก */
+button {
+  transition:
+    background 0.16s ease,
+    transform 0.16s ease,
+    opacity 0.16s ease;
+}
+
+/* Scrollbar */
+.ep-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #b7d8e2 transparent;
+}
+
+.ep-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.ep-scrollbar::-webkit-scrollbar-thumb {
+  background: #b7d8e2;
+  border-radius: 999px;
+}
+
+.ep-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
