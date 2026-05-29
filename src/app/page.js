@@ -544,16 +544,16 @@ export default function Home() {
           <section className="w-full rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200 sm:p-8">
             <div className="mb-6 text-center">
               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
-              <img
-                src={LOGO_SRC}
-                alt="EP Logo"
-                className="h-full w-full object-contain p-0"
-                style={{
-                  transform: 'scale(1.9)',
-                  transformOrigin: 'center',
-                }}
-              />
-            </div>
+                <img
+                  src={LOGO_SRC}
+                  alt="EP Logo"
+                  className="h-full w-full object-contain p-0"
+                  style={{
+                    transform: 'scale(1.9)',
+                    transformOrigin: 'center',
+                  }}
+                />
+              </div>
 
               <h1 className="text-2xl font-black text-slate-800">
                 ระบบเช็กชื่อเข้าแถว
@@ -743,6 +743,12 @@ export default function Home() {
           />
           <SummaryCard title="ยังไม่บันทึก" value={summary.notSaved} unit="คน" tone="slate" />
         </section>
+
+        <DailyAbsentBox
+          students={students}
+          attendanceMap={attendanceMap}
+          selectedDate={selectedDate}
+        />
 
         <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 md:p-6">
           <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -1512,6 +1518,75 @@ function SummaryCard({ title, value, unit, tone = 'blue' }) {
         <span className="text-xs opacity-75 md:pb-1 md:text-sm">{unit}</span>
       </div>
     </div>
+  );
+}
+
+function DailyAbsentBox({ students, attendanceMap, selectedDate }) {
+  const absentStudents = (students || []).filter((student) => {
+    const studentId = String(student.student_id || '');
+    return attendanceMap[studentId] === 'A';
+  });
+
+  return (
+    <section className="mb-6 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 md:p-6">
+      <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-xl font-black text-slate-800">
+            รายชื่อคนขาดประจำวัน
+          </h2>
+          <p className="text-sm text-slate-500">
+            วันที่ {formatThaiDate(selectedDate)} | ขาด {absentStudents.length} คน
+          </p>
+        </div>
+
+        <div className="rounded-full bg-red-100 px-4 py-2 text-sm font-black text-red-700">
+          ขาด {absentStudents.length} คน
+        </div>
+      </div>
+
+      {absentStudents.length === 0 ? (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-5 text-center text-sm font-bold text-emerald-700">
+          ยังไม่มีรายชื่อคนขาดในวันนี้
+        </div>
+      ) : (
+        <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+          {absentStudents.map((student, index) => {
+            const fullName = `${student.prefix || ''}${student.first_name || ''} ${
+              student.last_name || ''
+            }`.trim();
+
+            return (
+              <div
+                key={student.student_id}
+                className="flex items-start gap-3 rounded-2xl border border-red-100 bg-red-50 px-4 py-3"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 text-xs font-black text-white">
+                  {index + 1}
+                </div>
+
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-red-500">
+                    {student.student_id}
+                  </div>
+
+                  <div className="break-words text-sm font-black text-slate-800">
+                    {fullName || '-'}
+                  </div>
+
+                  <div className="mt-0.5 text-xs font-semibold text-slate-500">
+                    {student.level}.{student.year}/{student.room_no}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="mt-3 text-xs text-slate-500">
+        หมายเหตุ: รายชื่อนี้แสดงเฉพาะคนที่ถูกเลือกสถานะ “ขาด” แล้วเท่านั้น
+      </div>
+    </section>
   );
 }
 
