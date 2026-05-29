@@ -44,7 +44,7 @@ export default function AppNav({ currentUser, active = '' }) {
   }
 
   return (
-    <nav className="mb-4 overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-slate-200">
+    <nav className="relative z-50 mb-4 rounded-3xl bg-white shadow-sm ring-1 ring-slate-200">
       <div className="flex items-center justify-between gap-3 px-4 py-3">
         <button
           type="button"
@@ -92,7 +92,7 @@ export default function AppNav({ currentUser, active = '' }) {
         </div>
       </div>
 
-      <div className="border-t border-slate-100 bg-sky-50/60 px-4 py-3">
+      <div className="rounded-b-3xl border-t border-slate-100 bg-sky-50/60 px-4 py-3">
         <div className="hidden flex-wrap items-center gap-2 lg:flex">
           {MAIN_MENUS.map((item, index) => (
             <button
@@ -106,9 +106,10 @@ export default function AppNav({ currentUser, active = '' }) {
           ))}
 
           {isAdmin && (
-            <div className="group relative">
+            <div className="relative">
               <button
                 type="button"
+                onClick={() => setOpen((prev) => !prev)}
                 className={getMenuClass(
                   ADMIN_MENUS.some((item) => item.active === active)
                 )}
@@ -116,24 +117,26 @@ export default function AppNav({ currentUser, active = '' }) {
                 เมนูแอดมิน ▾
               </button>
 
-              <div className="invisible absolute right-0 top-[calc(100%+8px)] z-50 w-72 rounded-3xl border border-slate-200 bg-white p-2 opacity-0 shadow-xl transition group-hover:visible group-hover:opacity-100">
-                <div className="ep-scrollbar max-h-[70vh] overflow-y-auto pr-1">
-                  {ADMIN_MENUS.map((item) => (
-                    <button
-                      key={item.path}
-                      type="button"
-                      onClick={() => go(item.path)}
-                      className={`mb-1 block w-full rounded-2xl px-4 py-3 text-left text-sm font-bold transition last:mb-0 ${
-                        active === item.active
-                          ? 'bg-sky-600 text-white'
-                          : 'text-slate-600 hover:bg-slate-100'
-                      }`}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
+              {open && (
+                <div className="absolute right-0 top-[calc(100%+10px)] z-[9999] w-72 rounded-3xl border border-slate-200 bg-white p-2 shadow-2xl">
+                  <div className="ep-scrollbar max-h-[70vh] overflow-y-auto pr-1">
+                    {ADMIN_MENUS.map((item) => (
+                      <button
+                        key={item.path}
+                        type="button"
+                        onClick={() => go(item.path)}
+                        className={`mb-1 block w-full rounded-2xl px-4 py-3 text-left text-sm font-bold transition last:mb-0 ${
+                          active === item.active
+                            ? 'bg-sky-600 text-white'
+                            : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
         </div>
@@ -165,7 +168,7 @@ export default function AppNav({ currentUser, active = '' }) {
       </div>
 
       {open && isAdmin && (
-        <div className="border-t border-slate-100 bg-white p-3 lg:hidden">
+        <div className="rounded-b-3xl border-t border-slate-100 bg-white p-3 lg:hidden">
           <div className="grid gap-2">
             {ADMIN_MENUS.map((item) => (
               <button
