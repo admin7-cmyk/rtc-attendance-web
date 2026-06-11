@@ -1,10 +1,25 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import AppNav from '@/components/AppNav';
 
 const LOGO_SRC = '/brand/logo-ep.png';
+
+const SCAN_FORMATS = [
+  'qr_code',
+  'code_128',
+  'code_39',
+  'code_93',
+  'ean_13',
+  'ean_8',
+  'upc_a',
+  'upc_e',
+  'itf',
+  'codabar',
+  'data_matrix',
+  'pdf417',
+];
 
 export default function Home() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -30,6 +45,9 @@ export default function Home() {
   const [searchText, setSearchText] = useState('');
   const [loadingData, setLoadingData] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerMessage, setScannerMessage] = useState('');
 
   const [pageError, setPageError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -167,6 +185,8 @@ export default function Home() {
     setSearchText('');
     setPageError('');
     setSuccessMessage('');
+    setScannerOpen(false);
+    setScannerMessage('');
     setLoginForm({
       username: '',
       pin: '',
@@ -467,6 +487,89 @@ export default function Home() {
     setSelectedStudentHistory(null);
   }
 
+  async function markStudentPresentByScan(rawValue) {
+    try {
+      setPageError('');
+      setSuccessMessage('');
+      setScannerMessage('');
+
+      const scannedStudentId = normalizeScanStudentId(rawValue);
+
+      if (!scannedStudentId) {
+        throw new Error('ไม่พบเลขประจำตัวนักเรียนจาก QR/Barcode');
+      }
+
+      const student = students.find(
+        (item) => String(item.student_id || '').trim() === scannedStudentId
+      );
+
+      if (!student) {
+        throw new Error(`ไม่พบรหัสนักเรียน ${scannedStudentId} ในห้องที่เลือก`);
+      }
+
+      if (!currentUser) {
+        throw new Error('กรุณาเข้าสู่ระบบก่อน');
+      }
+
+      if (!selectedRoomId) {
+        throw new Error('กรุณาเลือกห้องเรียนก่อนสแกน');
+      }
+
+      if (!selectedDate) {
+        throw new Error('กรุณาเลือกวันที่ก่อนสแกน');
+      }
+
+      const dayInfo = schoolDayInfo || (await fetchSchoolDayInfo(selectedRoom, selectedDate));
+
+      if (String(dayInfo.is_lineup_day).toUpperCase() !== 'TRUE') {
+        throw new Error(
+          `วันที่เลือกไม่ใช่วันเข้าแถว: ${
+            dayInfo.room_exception_note || dayInfo.note || '-'
+          }`
+        );
+      }
+
+      const checkedAt = new Date().toISOString();
+      const attId = `${selectedDate}_${selectedRoomId}_${scannedStudentId}`;
+
+      const row = {
+        att_id: attId,
+        date: selectedDate,
+        term_id: dayInfo.term_id || '',
+        week_no: dayInfo.week_no || '',
+        month_key: dayInfo.month_key || '',
+        room_id: selectedRoomId,
+        student_id: scannedStudentId,
+        status: 'P',
+        checked_by: currentUser.teacher_id || currentUser.username || '',
+        checked_at: checkedAt,
+      };
+
+      const { error } = await supabase.from('attendance').upsert([row], {
+        onConflict: 'att_id',
+      });
+
+      if (error) throw new Error(error.message);
+
+      setAttendanceMap((prev) => ({
+        ...prev,
+        [scannedStudentId]: 'P',
+      }));
+
+      const fullName = `${student.prefix || ''}${student.first_name || ''} ${
+        student.last_name || ''
+      }`.trim();
+
+      const message = `เช็กชื่อสำเร็จ: ${scannedStudentId} ${fullName}`;
+      setScannerMessage(message);
+      setSuccessMessage(message);
+    } catch (err) {
+      const message = err.message || 'สแกนไม่สำเร็จ';
+      setScannerMessage(message);
+      setPageError(message);
+    }
+  }
+
   async function saveAttendance() {
     try {
       setSaving(true);
@@ -764,6 +867,14 @@ export default function Home() {
 
             <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">
               <button
+                onClick={() => setScannerOpen(true)}
+                disabled={students.length === 0}
+                className="rounded-full bg-sky-600 px-4 py-3 text-sm font-bold text-white hover:bg-sky-700 disabled:opacity-50 md:py-2"
+              >
+                สแกน QR / Barcode
+              </button>
+
+              <button
                 onClick={markAllPresent}
                 disabled={students.length === 0}
                 className="rounded-full bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50 md:py-2"
@@ -837,7 +948,278 @@ export default function Home() {
           onClose={closeStudentHistory}
         />
       )}
+
+      {scannerOpen && (
+        <ScannerModal
+          onClose={() => setScannerOpen(false)}
+          onScan={markStudentPresentByScan}
+          message={scannerMessage}
+          setMessage={setScannerMessage}
+        />
+      )}
     </main>
+  );
+}
+
+function ScannerModal({ onClose, onScan, message, setMessage }) {
+  const videoRef = useRef(null);
+  const controlsRef = useRef(null);
+  const readerRef = useRef(null);
+  const processingRef = useRef(false);
+  const lastScanRef = useRef({
+    value: '',
+    time: 0,
+  });
+
+  const [manualCode, setManualCode] = useState('');
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const [scanning, setScanning] = useState(false);
+
+  useEffect(() => {
+    startCamera();
+
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  async function startCamera() {
+    try {
+      setCameraError('');
+      setCameraReady(false);
+      setScanning(false);
+      setMessage('');
+
+      stopCamera();
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Browser นี้ไม่รองรับการเปิดกล้อง');
+      }
+
+      const { BrowserMultiFormatReader } = await import('@zxing/browser');
+
+      const reader = new BrowserMultiFormatReader();
+      readerRef.current = reader;
+
+      const constraints = {
+        video: {
+          facingMode: {
+            ideal: 'environment',
+          },
+          width: {
+            ideal: 1280,
+          },
+          height: {
+            ideal: 720,
+          },
+        },
+        audio: false,
+      };
+
+      setScanning(true);
+
+      const controls = await reader.decodeFromConstraints(
+        constraints,
+        videoRef.current,
+        async (result) => {
+          if (!result) return;
+
+          const rawValue = result.getText ? result.getText() : String(result || '');
+          const normalized = normalizeScanStudentId(rawValue);
+
+          if (!normalized) return;
+
+          const now = Date.now();
+
+          if (
+            lastScanRef.current.value === normalized &&
+            now - lastScanRef.current.time < 1600
+          ) {
+            return;
+          }
+
+          if (processingRef.current) return;
+
+          processingRef.current = true;
+          lastScanRef.current = {
+            value: normalized,
+            time: now,
+          };
+
+          try {
+            setMessage(`อ่านได้: ${normalized}`);
+            await onScan(normalized);
+          } finally {
+            setTimeout(() => {
+              processingRef.current = false;
+            }, 900);
+          }
+        }
+      );
+
+      controlsRef.current = controls;
+      setCameraReady(true);
+      setScanning(true);
+    } catch (err) {
+      setScanning(false);
+      setCameraReady(false);
+      setCameraError(
+        err?.message ||
+          'เปิดกล้องไม่สำเร็จ ถ้าใช้มือถือให้ลองเปิดผ่าน HTTPS หรืออนุญาตกล้องก่อน'
+      );
+    }
+  }
+
+  function stopCamera() {
+    try {
+      if (controlsRef.current) {
+        controlsRef.current.stop();
+        controlsRef.current = null;
+      }
+
+      if (videoRef.current?.srcObject) {
+        const stream = videoRef.current.srcObject;
+        stream.getTracks?.().forEach((track) => track.stop());
+        videoRef.current.srcObject = null;
+      }
+    } catch {
+      // ไม่ต้องทำอะไร
+    }
+
+    setScanning(false);
+    setCameraReady(false);
+  }
+
+  async function handleManualSubmit(event) {
+    event.preventDefault();
+
+    if (!manualCode.trim()) {
+      setMessage('กรุณากรอกเลขประจำตัวนักเรียน');
+      return;
+    }
+
+    const normalized = normalizeScanStudentId(manualCode);
+
+    if (!normalized) {
+      setMessage('ไม่พบเลขประจำตัวนักเรียน');
+      return;
+    }
+
+    setMessage(`กรอกรหัส: ${normalized}`);
+    await onScan(normalized);
+    setManualCode('');
+  }
+
+  function closeModal() {
+    stopCamera();
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 p-3">
+      <div className="w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <h3 className="text-xl font-black text-slate-800">
+              สแกน QR / Barcode
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">
+              ใช้เลขประจำตัวนักเรียนใน QR code หรือ Barcode เพื่อเช็กชื่อทันที
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={closeModal}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="p-5">
+          <div className="relative overflow-hidden rounded-3xl border border-slate-200 bg-slate-950">
+            <video
+              ref={videoRef}
+              className="aspect-video w-full bg-slate-950 object-cover"
+              muted
+              playsInline
+              autoPlay
+            />
+
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div className="h-40 w-64 rounded-3xl border-4 border-white/70 shadow-[0_0_0_999px_rgba(2,6,23,0.35)]" />
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-2 md:grid-cols-3">
+            <div
+              className={`rounded-2xl px-4 py-3 text-center text-sm font-black ${
+                cameraReady
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-slate-50 text-slate-500'
+              }`}
+            >
+              {cameraReady ? 'กล้องพร้อม' : 'รอกล้อง'}
+            </div>
+
+            <div
+              className={`rounded-2xl px-4 py-3 text-center text-sm font-black ${
+                scanning
+                  ? 'bg-sky-50 text-sky-700'
+                  : 'bg-slate-50 text-slate-500'
+              }`}
+            >
+              {scanning ? 'กำลังสแกน' : 'หยุดสแกน'}
+            </div>
+
+            <button
+              type="button"
+              onClick={startCamera}
+              className="rounded-2xl bg-slate-800 px-4 py-3 text-sm font-black text-white hover:bg-slate-900"
+            >
+              เปิดกล้องใหม่
+            </button>
+          </div>
+
+          {cameraError && (
+            <div className="mt-3 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-sm font-bold text-orange-700">
+              {cameraError}
+            </div>
+          )}
+
+          {message && (
+            <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-sm font-bold text-sky-700">
+              {message}
+            </div>
+          )}
+
+          <form
+            onSubmit={handleManualSubmit}
+            className="mt-4 grid gap-2 md:grid-cols-[1fr_auto]"
+          >
+            <input
+              value={manualCode}
+              onChange={(e) => setManualCode(e.target.value)}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-800 outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+              placeholder="กรอก/วางเลขประจำตัวนักเรียนแทนการสแกน"
+            />
+
+            <button
+              type="submit"
+              className="rounded-2xl bg-sky-600 px-5 py-3 text-sm font-black text-white hover:bg-sky-700"
+            >
+              เช็กชื่อ
+            </button>
+          </form>
+
+          <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs leading-6 text-slate-500">
+            หมายเหตุ: ถ้าเปิดผ่านมือถือ ให้กดอนุญาตกล้อง และควรเปิดผ่านลิงก์ HTTPS ของ Vercel
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1636,6 +2018,22 @@ function normalizeStatus(status) {
   }
 
   return '';
+}
+
+function normalizeScanStudentId(value) {
+  const text = String(value || '').trim();
+
+  if (!text) return '';
+
+  const direct = text.replace(/\s+/g, '');
+
+  if (/^\d+$/.test(direct)) {
+    return direct;
+  }
+
+  const match = text.match(/\d{6,20}/);
+
+  return match ? match[0] : direct;
 }
 
 function applyRoomExceptionToSchoolDay({ schoolDay, roomExceptions }) {
