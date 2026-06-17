@@ -331,7 +331,7 @@ export default function Home() {
     });
 
     const totalRequiredDays = effectiveLineupDateSet.size;
-    const allowedAbsentDays = Math.floor(totalRequiredDays * 0.4);
+    const allowedAbsentDays = Math.floor(totalRequiredDays * 0.2);
 
     studentIds.forEach((studentId) => {
       statsMap[studentId] = {

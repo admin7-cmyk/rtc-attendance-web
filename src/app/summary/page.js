@@ -180,7 +180,12 @@ export default function SummaryPage() {
       }
 
       setRoomSummary(roomSummaryData || []);
-      setRiskStudents(riskData || []);
+      setRiskStudents(
+        (riskData || []).map((student) => ({
+          ...student,
+          risk_level: getRiskLevelFromAbsentPercent(student.absent_percent),
+        }))
+      );
     } catch (err) {
       setPageError(err.message || 'โหลดข้อมูลสรุปไม่สำเร็จ');
     } finally {
@@ -378,7 +383,7 @@ export default function SummaryPage() {
               นักเรียนกลุ่มเสี่ยง
             </h2>
             <p className="text-sm text-slate-500">
-              เฝ้าระวัง 10% / เสี่ยงสูง 20% / เสี่ยงสูงมาก 30% / ตกกิจกรรม 40%
+              เฝ้าระวัง 5% / เสี่ยงสูง 10% / เสี่ยงสูงมาก 15% / ตกกิจกรรม 20%
             </p>
             <p className="mt-1 text-xs font-semibold text-slate-400 sm:hidden">
               เลื่อนตารางซ้าย-ขวาเพื่อดูข้อมูลทั้งหมด
@@ -473,6 +478,17 @@ function SummaryCard({ title, value, unit }) {
       </div>
     </div>
   );
+}
+
+function getRiskLevelFromAbsentPercent(value) {
+  const percent = Number(value || 0);
+
+  if (percent >= 20) return 'ตกกิจกรรม';
+  if (percent >= 15) return 'เสี่ยงสูงมาก';
+  if (percent >= 10) return 'เสี่ยงสูง';
+  if (percent >= 5) return 'เฝ้าระวัง';
+
+  return '';
 }
 
 function RiskBadge({ risk }) {
