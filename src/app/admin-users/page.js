@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import AppNav from '@/components/AppNav';
+import { isTrueValue, parseRoomIds } from '@/lib/attendanceLogic.mjs';
+import { normalizeStoredPin } from '@/lib/pinHash.mjs';
 import { BulkEditDialog, BulkSelectionBar, RowCheckbox } from '@/components/BulkEditTools';
 
 const EMPTY_FORM = {
@@ -155,7 +157,7 @@ export default function AdminUsersPage() {
     const nextForm = {
       teacher_id: user.teacher_id || '',
       username: user.username || '',
-      pin: user.pin || '',
+      pin: '',
       name: user.name || '',
       role: user.role || 'teacher',
       room_ids: user.room_ids || '',
@@ -262,6 +264,9 @@ export default function AdminUsersPage() {
       const name = String(form.name || '').trim();
       const role = String(form.role || '').trim().toLowerCase();
       const active = String(form.active || 'TRUE').trim().toUpperCase();
+      const existingUser = editingTeacherId
+        ? users.find((user) => user.teacher_id === editingTeacherId)
+        : null;
 
       if (!teacherId) {
         throw new Error('กรุณากรอก teacher_id');
@@ -271,7 +276,7 @@ export default function AdminUsersPage() {
         throw new Error('กรุณากรอก Username');
       }
 
-      if (!pin) {
+      if (!pin && !existingUser?.pin) {
         throw new Error('กรุณากรอก PIN');
       }
 
@@ -300,7 +305,7 @@ export default function AdminUsersPage() {
       const row = {
         teacher_id: teacherId,
         username,
-        pin,
+        pin: await normalizeStoredPin(pin || existingUser?.pin),
         name,
         role,
         room_ids: roomIdsText,
@@ -560,9 +565,12 @@ ${details}
                   PIN
                 </label>
                 <input
+                  type="password"
                   value={form.pin}
                   onChange={(e) => updateForm('pin', e.target.value)}
-                  placeholder="เช่น 1234"
+                  placeholder={editingTeacherId ? 'เว้นว่างถ้าไม่เปลี่ยน PIN' : 'เช่น 1234'}
+                  autoComplete="new-password"
+                  inputMode="numeric"
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-500"
                 />
               </div>
@@ -1033,31 +1041,6 @@ function ActiveBadge({ active }) {
     <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-black text-red-700">
       ปิดใช้งาน
     </span>
-  );
-}
-
-function parseRoomIds(roomIdsText) {
-  const text = String(roomIdsText || '').trim();
-
-  if (!text) return [];
-
-  if (text.toUpperCase() === 'ALL') return ['ALL'];
-
-  return text
-    .split(/[,;|\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function isTrueValue(value) {
-  const text = String(value || '').trim().toUpperCase();
-
-  return (
-    value === true ||
-    text === 'TRUE' ||
-    text === '1' ||
-    text === 'YES' ||
-    text === 'Y'
   );
 }
 
