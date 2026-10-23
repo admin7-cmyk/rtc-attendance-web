@@ -1,6 +1,8 @@
 'use client';
 
+import Image from 'next/image';
 import { useMemo, useState } from 'react';
+import { logoutSession } from '@/lib/supabase';
 
 const LOGO_SRC = '/brand/logo-ep.png';
 
@@ -38,9 +40,13 @@ export default function AppNav({ currentUser, active = '' }) {
     window.location.href = path;
   }
 
-  function logout() {
-    localStorage.removeItem('rtc_attendance_user');
-    window.location.href = '/';
+  async function logout() {
+    try {
+      await logoutSession();
+      window.location.href = '/';
+    } catch (error) {
+      window.alert(error.message);
+    }
   }
 
   return (
@@ -52,9 +58,11 @@ export default function AppNav({ currentUser, active = '' }) {
           className="flex min-w-0 items-center gap-3 text-left"
         >
           <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-sky-50 ring-1 ring-slate-200">
-            <img
+            <Image
               src={LOGO_SRC}
               alt="EP Logo"
+              width={44}
+              height={44}
               className="h-full w-full object-contain p-0"
               style={{
                 transform: 'scale(1.9)',
