@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import AppNav from '@/components/AppNav';
+import { buildDailyStatusRows } from '@/lib/dailyStatusLogic.mjs';
 
 const PAGE_SIZE = 1000;
 
@@ -17,6 +18,7 @@ export default function DailyStatusPage() {
   const [students, setStudents] = useState([]);
   const [schoolDays, setSchoolDays] = useState([]);
   const [attendanceRows, setAttendanceRows] = useState([]);
+  const [roomExceptions, setRoomExceptions] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState('');
@@ -41,7 +43,6 @@ export default function DailyStatusPage() {
       }
 
       setCurrentUser(parsed);
-      loadDailyStatus(parsed, selectedDate);
     } catch {
       localStorage.removeItem('rtc_attendance_user');
       setPageError('ข้อมูลผู้ใช้ไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่');
@@ -55,118 +56,9 @@ export default function DailyStatusPage() {
     }
   }, [currentUser, selectedDate]);
 
-  const roomStatusRows = useMemo(() => {
-    const activeStudentCountByRoom = new Map();
-
-    students
-      .filter((student) => isTrueValue(student.active))
-      .forEach((student) => {
-        const key = normalizeRoomId(student.room_id);
-
-        activeStudentCountByRoom.set(
-          key,
-          Number(activeStudentCountByRoom.get(key) || 0) + 1
-        );
-      });
-
-    const attendanceCountByRoom = new Map();
-    const presentCountByRoom = new Map();
-    const absentCountByRoom = new Map();
-
-    attendanceRows.forEach((item) => {
-      const key = normalizeRoomId(item.room_id);
-      const status = normalizeStatus(item.status);
-
-      attendanceCountByRoom.set(
-        key,
-        Number(attendanceCountByRoom.get(key) || 0) + 1
-      );
-
-      if (status === 'P') {
-        presentCountByRoom.set(
-          key,
-          Number(presentCountByRoom.get(key) || 0) + 1
-        );
-      }
-
-      if (status === 'A') {
-        absentCountByRoom.set(
-          key,
-          Number(absentCountByRoom.get(key) || 0) + 1
-        );
-      }
-    });
-
-    const schoolDayByScheduleGroup = new Map();
-
-    schoolDays.forEach((day) => {
-      if (normalizeDate(day.date) !== selectedDate) return;
-
-      schoolDayByScheduleGroup.set(String(day.schedule_group || ''), day);
-    });
-
-    return rooms
-      .map((room) => {
-        const roomKey = normalizeRoomId(room.room_id);
-
-        const totalStudents = Number(activeStudentCountByRoom.get(roomKey) || 0);
-        const checkedCount = Number(attendanceCountByRoom.get(roomKey) || 0);
-        const presentCount = Number(presentCountByRoom.get(roomKey) || 0);
-        const absentCount = Number(absentCountByRoom.get(roomKey) || 0);
-
-        const schoolDay = schoolDayByScheduleGroup.get(
-          String(room.schedule_group || '')
-        );
-
-        const hasSchoolDay = Boolean(schoolDay);
-        const isLineupDay = hasSchoolDay && isTrueValue(schoolDay.is_lineup_day);
-
-        let status = 'not_scheduled';
-        let statusLabel = 'ไม่มีข้อมูลวันเข้าแถว';
-        let note = 'ไม่พบข้อมูลใน school_days';
-
-        if (hasSchoolDay && !isLineupDay) {
-          status = 'holiday';
-          statusLabel = 'ไม่ต้องเข้าแถว';
-          note = schoolDay.note || 'วันนี้ไม่ใช่วันเข้าแถว';
-        }
-
-        if (isLineupDay) {
-          if (checkedCount === 0) {
-            status = 'missing';
-            statusLabel = 'ยังไม่บันทึก';
-            note = 'ยังไม่มีข้อมูลเช็กชื่อของห้องนี้';
-          } else if (checkedCount < totalStudents) {
-            status = 'partial';
-            statusLabel = 'บันทึกไม่ครบ';
-            note = `บันทึกแล้ว ${checkedCount}/${totalStudents} คน`;
-          } else {
-            status = 'done';
-            statusLabel = 'บันทึกแล้ว';
-            note = `ครบ ${checkedCount}/${totalStudents} คน`;
-          }
-        }
-
-        return {
-          room_id: room.room_id,
-          room_name: room.room_name || room.room_id,
-          level: room.level,
-          year: room.year,
-          room_no: room.room_no,
-          schedule_group: room.schedule_group,
-          total_students: totalStudents,
-          checked_count: checkedCount,
-          present_count: presentCount,
-          absent_count: absentCount,
-          status,
-          statusLabel,
-          note,
-          schoolDay,
-        };
-      })
-      .filter((row) => row.total_students > 0)
-      .sort(sortRoomStatusRows);
-  }, [rooms, students, schoolDays, attendanceRows, selectedDate]);
+  const roomStatusRows = useMemo(() => buildDailyStatusRows({
+    rooms, students, schoolDays, attendanceRows, roomExceptions, selectedDate,
+  }).sort(sortRoomStatusRows), [rooms, students, schoolDays, attendanceRows, roomExceptions, selectedDate]);
 
   const filteredRoomStatusRows = useMemo(() => {
     const keyword = String(searchText || '').trim().toLowerCase();
@@ -222,7 +114,7 @@ export default function DailyStatusPage() {
       setLoading(true);
       setPageError('');
 
-      const [roomData, studentData, schoolDayData, attendanceData] =
+      const [roomData, studentData, schoolDayData, attendanceData, exceptionData] =
         await Promise.all([
           fetchAllRows((from, to) =>
             supabase
@@ -254,12 +146,14 @@ export default function DailyStatusPage() {
               .eq('date', dateValue)
               .range(from, to)
           ),
+          fetchAllRows((from, to) => supabase.from('room_lineup_exceptions').select('*').range(from, to)),
         ]);
 
       setRooms(roomData || []);
       setStudents(studentData || []);
       setSchoolDays(schoolDayData || []);
       setAttendanceRows(attendanceData || []);
+      setRoomExceptions(exceptionData || []);
     } catch (err) {
       setPageError(err.message || 'โหลดสถานะเช็กชื่อไม่สำเร็จ');
     } finally {
@@ -618,46 +512,6 @@ async function fetchAllRows(buildQuery) {
   }
 
   return allRows;
-}
-
-function normalizeRoomId(value) {
-  return String(value || '')
-    .normalize('NFKC')
-    .trim()
-    .replace(/\s+/g, '')
-    .replace(/\./g, '')
-    .replace(/-/g, '/');
-}
-
-function normalizeDate(value) {
-  if (!value) return '';
-  return String(value).trim().slice(0, 10);
-}
-
-function normalizeStatus(status) {
-  const text = String(status || '').trim().toUpperCase();
-
-  if (text === 'P' || text === 'PRESENT' || text === 'มา' || text === 'TRUE') {
-    return 'P';
-  }
-
-  if (text === 'A' || text === 'ABSENT' || text === 'ขาด' || text === 'FALSE') {
-    return 'A';
-  }
-
-  return '';
-}
-
-function isTrueValue(value) {
-  const text = String(value || '').trim().toUpperCase();
-
-  return (
-    value === true ||
-    text === 'TRUE' ||
-    text === '1' ||
-    text === 'YES' ||
-    text === 'Y'
-  );
 }
 
 function sortRoomStatusRows(a, b) {
