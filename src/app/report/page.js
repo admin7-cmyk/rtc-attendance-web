@@ -1,12 +1,19 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import AppNav from '@/components/AppNav';
 import { exportWeeklyReportExcel } from '@/lib/exportWeeklyReportExcel';
 import { exportWeeklyReportWord } from '@/lib/exportWeeklyReportWord';
 import { exportSummaryReportExcel } from '@/lib/exportSummaryReportExcel';
 import { exportSummaryReportWord } from '@/lib/exportSummaryReportWord';
+import {
+  isTrueValue,
+  normalizeDate,
+  normalizeRoomId,
+  parseRoomIds,
+} from '@/lib/attendanceLogic.mjs';
+import { buildAttendanceSummaryMap, buildSummaryRows, buildSummaryTotal, buildWeeklyRows, buildWeeklyTotal, getReportRosterCounts, getRoomReportDays, getTargetLineupDays } from '@/lib/reportLogic.mjs';
 
 const PAGE_SIZE = 1000;
 const DAY_LABELS = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์'];
@@ -32,6 +39,9 @@ export default function ReportPage() {
   const [terms, setTerms] = useState([]);
   const [schoolDays, setSchoolDays] = useState([]);
   const [rooms, setRooms] = useState([]);
+  const [roomExceptions, setRoomExceptions] = useState([]);
+  const reportRequestId = useRef(0);
+  const reportDataCache = useRef(null);
 
   const [reportMode, setReportMode] = useState('week');
   const [selectedTermId, setSelectedTermId] = useState('');
@@ -93,6 +103,8 @@ export default function ReportPage() {
     if (reportMode === 'month' && !selectedMonthKey) return;
 
     loadReport();
+    // Report reloads are intentionally keyed by selected report controls.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     currentUser,
     reportMode,
@@ -132,12 +144,14 @@ export default function ReportPage() {
   const targetLineupDays = useMemo(() => {
     return getTargetLineupDays({
       schoolDays,
+      rooms,
+      roomExceptions,
       reportMode,
       selectedTermId,
       selectedWeekNo,
       selectedMonthKey,
     });
-  }, [schoolDays, reportMode, selectedTermId, selectedWeekNo, selectedMonthKey]);
+  }, [schoolDays, rooms, roomExceptions, reportMode, selectedTermId, selectedWeekNo, selectedMonthKey]);
 
   const openedScheduleGroups = useMemo(() => {
     return [
@@ -161,88 +175,15 @@ export default function ReportPage() {
     )}`;
   }, [targetLineupDays]);
 
-  const weeklyTotalRow = useMemo(() => {
-    const total = {
-      room_name: 'รวม',
-      total_students: 0,
-      daily: [0, 0, 0, 0, 0],
-      weekly_total: 0,
-      average: '',
-      percent: '',
-      checked_days: 0,
-      note: '',
-    };
-
-    weeklyRows.forEach((row) => {
-      total.total_students += Number(row.total_students || 0);
-      total.weekly_total += Number(row.weekly_total || 0);
-      total.checked_days += Number(row.checked_days || 0);
-
-      row.daily.forEach((value, index) => {
-        if (value !== '') {
-          total.daily[index] += Number(value || 0);
-        }
-      });
-    });
-
-    const expected = weeklyRows.reduce((sum, row) => {
-      return (
-        sum +
-        Number(row.total_students || 0) * Number(row.checked_days || 0)
-      );
-    }, 0);
-
-    total.average =
-      total.checked_days > 0
-        ? (total.weekly_total / total.checked_days).toFixed(2)
-        : '';
-
-    total.percent =
-      expected > 0 ? ((total.weekly_total / expected) * 100).toFixed(2) : '';
-
-    return total;
-  }, [weeklyRows]);
-
-  const summaryTotalRow = useMemo(() => {
-    const total = {
-      room_name: 'รวม',
-      total_students: 0,
-      checked_days: 0,
-      expected_total: 0,
-      present_count: 0,
-      absent_count: 0,
-      present_percent: '',
-      absent_percent: '',
-      note: '',
-    };
-
-    summaryRows.forEach((row) => {
-      total.total_students += Number(row.total_students || 0);
-      total.checked_days += Number(row.checked_days || 0);
-      total.expected_total += Number(row.expected_total || 0);
-      total.present_count += Number(row.present_count || 0);
-      total.absent_count += Number(row.absent_count || 0);
-    });
-
-    total.present_percent =
-      total.expected_total > 0
-        ? ((total.present_count / total.expected_total) * 100).toFixed(2)
-        : '';
-
-    total.absent_percent =
-      total.expected_total > 0
-        ? ((total.absent_count / total.expected_total) * 100).toFixed(2)
-        : '';
-
-    return total;
-  }, [summaryRows]);
+  const weeklyTotalRow = useMemo(() => buildWeeklyTotal(weeklyRows), [weeklyRows]);
+  const summaryTotalRow = useMemo(() => buildSummaryTotal(summaryRows), [summaryRows]);
 
   async function loadBootstrap() {
     try {
       setLoading(true);
       setPageError('');
 
-      const [termData, schoolDayData, roomData] = await Promise.all([
+      const [termData, schoolDayData, roomData, exceptionData] = await Promise.all([
         fetchAllRows((from, to) =>
           supabase
             .from('terms')
@@ -268,11 +209,13 @@ export default function ReportPage() {
             .order('room_no', { ascending: true })
             .range(from, to)
         ),
+        fetchAllRows((from, to) => supabase.from('room_lineup_exceptions').select('*').range(from, to)),
       ]);
 
       setTerms(termData);
       setSchoolDays(schoolDayData);
       setRooms(roomData);
+      setRoomExceptions(exceptionData);
 
       const firstTermId = termData[0]?.term_id || '';
       setSelectedTermId(firstTermId);
@@ -300,138 +243,46 @@ export default function ReportPage() {
     }
   }
 
-  async function loadReport() {
+  async function loadReport(forceRefresh = false) {
+    const requestId = ++reportRequestId.current;
     try {
       setLoading(true);
       setPageError('');
-
-      const currentTargetLineupDays = getTargetLineupDays({
-        schoolDays,
-        reportMode,
-        selectedTermId,
-        selectedWeekNo,
-        selectedMonthKey,
-      });
-
-      const activeScheduleGroups = [
-        ...new Set(
-          currentTargetLineupDays
-            .map((item) => item.schedule_group)
-            .filter(Boolean)
-        ),
-      ];
-
-      if (activeScheduleGroups.length === 0) {
-        setWeeklyRows([]);
-        setSummaryRows([]);
-        return;
-      }
-
-      const allTargetDates = [
-        ...new Set(
-          currentTargetLineupDays
-            .map((item) => normalizeDate(item.date))
-            .filter(Boolean)
-        ),
-      ];
-
-      const [attendanceData, studentData] = await Promise.all([
-        fetchAllRows((from, to) =>
-          supabase
-            .from('attendance')
-            .select('*')
-            .eq('term_id', selectedTermId)
-            .in('date', allTargetDates)
-            .order('date', { ascending: true })
-            .order('room_id', { ascending: true })
-            .range(from, to)
-        ),
-
-        fetchAllRows((from, to) =>
-          supabase.from('students').select('*').range(from, to)
-        ),
+      const cached = reportDataCache.current;
+      const reuse = !forceRefresh && cached?.termId === selectedTermId && Date.now() - cached.loadedAt < 30000;
+      const [attendanceData, studentData] = reuse ? cached.data : await Promise.all([
+        fetchAllRows((from, to) => supabase.from('attendance').select('*')
+          .eq('term_id', selectedTermId).order('att_id', { ascending: true }).range(from, to)),
+        fetchAllRows((from, to) => supabase.from('students').select('*').order('student_id', { ascending: true }).range(from, to)),
       ]);
-
-      const activeStudents = (studentData || []).filter((student) =>
-        isTrueValue(student.active)
-      );
-
-      const activeStudentCountByRoom = new Map();
-
-      activeStudents.forEach((student) => {
-        const roomKey = normalizeRoomId(student.room_id);
-        activeStudentCountByRoom.set(
-          roomKey,
-          Number(activeStudentCountByRoom.get(roomKey) || 0) + 1
-        );
+      if (requestId !== reportRequestId.current) return;
+      if (!reuse) reportDataCache.current = { termId: selectedTermId, loadedAt: Date.now(), data: [attendanceData, studentData] };
+      const period = { schoolDays, roomExceptions, reportMode, selectedTermId, selectedWeekNo, selectedMonthKey };
+      const activeStudentCountByRoom = getReportRosterCounts({
+        students: studentData, attendanceRows: attendanceData,
+        term: terms.find((term) => String(term.term_id) === String(selectedTermId)),
       });
-
-      const targetRooms = rooms.filter((room) => {
-      const roomKey = normalizeRoomId(room.room_id);
-
-      const roomHasOpened = activeScheduleGroups.includes(
-        room.schedule_group
+      const targetRooms = rooms.filter((room) =>
+        canAccessRoom(currentUser, room.room_id) &&
+        Number(activeStudentCountByRoom.get(normalizeRoomId(room.room_id)) || 0) > 0 &&
+        getRoomReportDays({ room, ...period }).some((day) => isTrueValue(day.is_lineup_day))
       );
-
-      const activeStudentCount = Number(
-        activeStudentCountByRoom.get(roomKey) || 0
-      );
-
-      const hasPermission = canAccessRoom(currentUser, room.room_id);
-
-      return roomHasOpened && activeStudentCount > 0 && hasPermission;
-    });
-
-      const summaryMap = new Map();
-
-      (attendanceData || []).forEach((item) => {
-        const roomKey = normalizeRoomId(item.room_id);
-        const dateKey = normalizeDate(item.date);
-        const key = `${roomKey}|${dateKey}`;
-        const status = normalizeStatus(item.status);
-
-        if (!summaryMap.has(key)) {
-          summaryMap.set(key, {
-            totalRecords: 0,
-            presentCount: 0,
-            absentCount: 0,
-          });
-        }
-
-        const summary = summaryMap.get(key);
-        summary.totalRecords += 1;
-
-        if (status === 'P') summary.presentCount += 1;
-        if (status === 'A') summary.absentCount += 1;
-      });
-
+      const options = { ...period, rooms: targetRooms, activeStudentCountByRoom, summaryMap: buildAttendanceSummaryMap(attendanceData) };
       if (reportMode === 'week') {
-        const rows = buildWeeklyRows({
-          rooms: targetRooms,
-          schoolDays,
-          selectedTermId,
-          selectedWeekNo,
-          activeStudentCountByRoom,
-          summaryMap,
-        });
-
-        setWeeklyRows(sortRoomRows(rows));
+        setWeeklyRows(sortRoomRows(buildWeeklyRows(options)));
         setSummaryRows([]);
       } else {
-        const rows = buildSummaryRows({
-          rooms: targetRooms,
-          targetLineupDays: currentTargetLineupDays,
-          activeStudentCountByRoom,
-          summaryMap,
-        });
-
-        setSummaryRows(sortRoomRows(rows));
+        setSummaryRows(sortRoomRows(buildSummaryRows(options)));
         setWeeklyRows([]);
       }
     } catch (err) {
-      setPageError(err.message || 'โหลดรายงานไม่สำเร็จ');
+      if (requestId === reportRequestId.current) {
+        setPageError(err.message || 'โหลดรายงานไม่สำเร็จ');
+        setWeeklyRows([]);
+        setSummaryRows([]);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === reportRequestId.current) setLoading(false);
     }
   }
 
@@ -959,154 +810,6 @@ function LoadingBox() {
   );
 }
 
-function getTargetLineupDays({
-  schoolDays,
-  reportMode,
-  selectedTermId,
-  selectedWeekNo,
-  selectedMonthKey,
-}) {
-  return schoolDays
-    .filter((item) => {
-      const sameTerm = String(item.term_id) === String(selectedTermId);
-      const lineupDay = isTrueValue(item.is_lineup_day);
-
-      if (!sameTerm || !lineupDay) return false;
-
-      if (reportMode === 'week') {
-        return String(item.week_no) === String(selectedWeekNo);
-      }
-
-      if (reportMode === 'month') {
-        return String(item.month_key) === String(selectedMonthKey);
-      }
-
-      return true;
-    })
-    .sort((a, b) => normalizeDate(a.date).localeCompare(normalizeDate(b.date)));
-}
-
-function buildWeeklyRows({
-  rooms,
-  schoolDays,
-  selectedTermId,
-  selectedWeekNo,
-  activeStudentCountByRoom,
-  summaryMap,
-}) {
-  return rooms.map((room) => {
-    const roomKey = normalizeRoomId(room.room_id);
-    const totalStudents = Number(activeStudentCountByRoom.get(roomKey) || 0);
-
-    const roomWeekDaysAll = schoolDays
-      .filter(
-        (item) =>
-          String(item.term_id) === String(selectedTermId) &&
-          String(item.week_no) === String(selectedWeekNo) &&
-          item.schedule_group === room.schedule_group
-      )
-      .sort((a, b) => normalizeDate(a.date).localeCompare(normalizeDate(b.date)))
-      .slice(0, 5);
-
-    let weeklyTotal = 0;
-    let checkedDays = 0;
-
-    const daily = roomWeekDaysAll.map((day) => {
-      if (!isTrueValue(day.is_lineup_day)) return '';
-
-      const dateKey = normalizeDate(day.date);
-      const key = `${roomKey}|${dateKey}`;
-      const summary = summaryMap.get(key);
-
-      if (!summary || summary.totalRecords === 0) return '';
-
-      checkedDays++;
-      weeklyTotal += summary.presentCount;
-
-      return summary.presentCount;
-    });
-
-    while (daily.length < 5) {
-      daily.push('');
-    }
-
-    const expected = totalStudents * checkedDays;
-
-    return {
-      room_id: room.room_id,
-      room_name: room.room_name || room.room_id,
-      level: room.level,
-      year: room.year,
-      room_no: room.room_no,
-      schedule_group: room.schedule_group,
-      total_students: totalStudents,
-      daily,
-      weekly_total: weeklyTotal,
-      checked_days: checkedDays,
-      average: checkedDays > 0 ? (weeklyTotal / checkedDays).toFixed(2) : '',
-      percent: expected > 0 ? ((weeklyTotal / expected) * 100).toFixed(2) : '',
-      note: checkedDays > 0 ? '' : 'ยังไม่บันทึก',
-    };
-  });
-}
-
-function buildSummaryRows({
-  rooms,
-  targetLineupDays,
-  activeStudentCountByRoom,
-  summaryMap,
-}) {
-  return rooms.map((room) => {
-    const roomKey = normalizeRoomId(room.room_id);
-    const totalStudents = Number(activeStudentCountByRoom.get(roomKey) || 0);
-
-    const roomLineupDays = targetLineupDays.filter(
-      (day) => day.schedule_group === room.schedule_group
-    );
-
-    let checkedDays = 0;
-    let presentCount = 0;
-    let absentCount = 0;
-
-    roomLineupDays.forEach((day) => {
-      const dateKey = normalizeDate(day.date);
-      const key = `${roomKey}|${dateKey}`;
-      const summary = summaryMap.get(key);
-
-      if (!summary || summary.totalRecords === 0) return;
-
-      checkedDays += 1;
-      presentCount += Number(summary.presentCount || 0);
-      absentCount += Number(summary.absentCount || 0);
-    });
-
-    const expectedTotal = totalStudents * checkedDays;
-
-    return {
-      room_id: room.room_id,
-      room_name: room.room_name || room.room_id,
-      level: room.level,
-      year: room.year,
-      room_no: room.room_no,
-      schedule_group: room.schedule_group,
-      total_students: totalStudents,
-      checked_days: checkedDays,
-      expected_total: expectedTotal,
-      present_count: presentCount,
-      absent_count: absentCount,
-      present_percent:
-        expectedTotal > 0
-          ? ((presentCount / expectedTotal) * 100).toFixed(2)
-          : '',
-      absent_percent:
-        expectedTotal > 0
-          ? ((absentCount / expectedTotal) * 100).toFixed(2)
-          : '',
-      note: checkedDays > 0 ? '' : 'ยังไม่บันทึก',
-    };
-  });
-}
-
 async function fetchAllRows(buildQuery) {
   let allRows = [];
   let from = 0;
@@ -1126,20 +829,6 @@ async function fetchAllRows(buildQuery) {
   }
 
   return allRows;
-}
-
-function normalizeRoomId(value) {
-  return String(value || '')
-    .normalize('NFKC')
-    .trim()
-    .replace(/\s+/g, '')
-    .replace(/\./g, '')
-    .replace(/-/g, '/');
-}
-
-function normalizeDate(value) {
-  if (!value) return '';
-  return String(value).trim().slice(0, 10);
 }
 
 function sortRoomRows(rows) {
@@ -1170,32 +859,6 @@ function getLevelWeight(level) {
   if (text.includes('ปวส')) return 2;
 
   return 99;
-}
-
-function normalizeStatus(status) {
-  const text = String(status || '').trim().toUpperCase();
-
-  if (text === 'P' || text === 'PRESENT' || text === 'มา' || text === 'TRUE') {
-    return 'P';
-  }
-
-  if (text === 'A' || text === 'ABSENT' || text === 'ขาด' || text === 'FALSE') {
-    return 'A';
-  }
-
-  return '';
-}
-
-function isTrueValue(value) {
-  const text = String(value || '').trim().toUpperCase();
-
-  return (
-    value === true ||
-    text === 'TRUE' ||
-    text === '1' ||
-    text === 'YES' ||
-    text === 'Y'
-  );
 }
 
 function formatThaiLongDate(ymd) {
@@ -1259,10 +922,11 @@ function canAccessRoom(currentUser, roomId) {
 
   if (role === 'admin') return true;
 
-  const allowedRoomIds = String(currentUser?.room_ids || '')
-    .split(',')
-    .map((item) => normalizeRoomId(item))
-    .filter(Boolean);
+  const allowedRoomIds = parseRoomIds(currentUser?.room_ids);
 
-  return allowedRoomIds.includes(normalizeRoomId(roomId));
+  if (allowedRoomIds.includes('ALL')) return true;
+
+  return allowedRoomIds
+    .map((item) => normalizeRoomId(item))
+    .includes(normalizeRoomId(roomId));
 }
