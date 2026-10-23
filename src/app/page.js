@@ -1,8 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import Image from 'next/image';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { supabase, logoutSession } from '@/lib/supabase';
 import AppNav from '@/components/AppNav';
+import {
+  applyRoomExceptionToSchoolDay,
+  normalizeScanStudentId,
+  normalizeStatus,
+  parseRoomIds,
+} from '@/lib/attendanceLogic.mjs';
 
 const LOGO_SRC = '/brand/logo-ep.png';
 
@@ -22,6 +29,7 @@ const SCAN_FORMATS = [
 ];
 
 export default function Home() {
+  const attendanceRequestId = useRef(0);
   const [currentUser, setCurrentUser] = useState(null);
 
   const [loginForm, setLoginForm] = useState({
@@ -74,6 +82,8 @@ export default function Home() {
     if (currentUser && selectedRoomId && selectedDate) {
       loadAttendancePage(selectedRoomId, selectedDate);
     }
+    // Fetch attendance only when the selected user/room/date changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, selectedRoomId, selectedDate]);
 
   const selectedRoom = useMemo(() => {
@@ -142,26 +152,25 @@ export default function Home() {
         throw new Error('กรุณากรอก Username และ PIN');
       }
 
-      const { data, error } = await supabase
-        .from('app_users')
-        .select('*')
-        .eq('username', username)
-        .eq('pin', pin)
-        .limit(1)
-        .maybeSingle();
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, pin }),
+      });
 
-      if (error) throw new Error(error.message);
-      if (!data) throw new Error('Username หรือ PIN ไม่ถูกต้อง');
-      if (!isActiveValue(data.active)) throw new Error('บัญชีนี้ถูกปิดใช้งาน');
+      const payload = await response.json().catch(() => ({}));
 
-      const user = {
-        teacher_id: data.teacher_id,
-        username: data.username,
-        name: data.name,
-        role: data.role,
-        room_ids: data.room_ids,
-        active: data.active,
-      };
+      if (!response.ok) {
+        throw new Error(payload.error || 'Username หรือ PIN ไม่ถูกต้อง');
+      }
+
+      const user = payload.user;
+
+      if (!user) {
+        throw new Error('เข้าสู่ระบบไม่สำเร็จ');
+      }
 
       localStorage.setItem('rtc_attendance_user', JSON.stringify(user));
       setCurrentUser(user);
@@ -172,8 +181,14 @@ export default function Home() {
     }
   }
 
-  function logout() {
-    localStorage.removeItem('rtc_attendance_user');
+  async function logout() {
+    try {
+      await logoutSession();
+    } catch (error) {
+      setPageError(error.message);
+      return;
+    }
+    attendanceRequestId.current += 1;
     setCurrentUser(null);
     setRooms([]);
     setStudents([]);
@@ -234,10 +249,12 @@ export default function Home() {
   }
 
   async function loadAttendancePage(roomId, dateText) {
+    const requestId = ++attendanceRequestId.current;
     try {
       setPageError('');
       setSuccessMessage('');
       setLoadingData(true);
+      setSchoolDayInfo(null);
       setSearchText('');
       setSelectedStudentHistory(null);
 
@@ -278,11 +295,13 @@ export default function Home() {
         roomId,
       });
 
+      if (requestId !== attendanceRequestId.current) return;
       setStudents(activeStudents);
       setAttendanceMap(nextMap);
       setSchoolDayInfo(dayInfo);
       setStudentStatsMap(statsMap);
     } catch (err) {
+      if (requestId !== attendanceRequestId.current) return;
       setStudents([]);
       setAttendanceMap({});
       setSchoolDayInfo(null);
@@ -290,7 +309,7 @@ export default function Home() {
       setSelectedStudentHistory(null);
       setPageError(err.message || 'โหลดข้อมูลเช็กชื่อไม่สำเร็จ');
     } finally {
-      setLoadingData(false);
+      if (requestId === attendanceRequestId.current) setLoadingData(false);
     }
   }
 
@@ -488,7 +507,9 @@ export default function Home() {
   }
 
   async function markStudentPresentByScan(rawValue) {
+    const requestId = attendanceRequestId.current;
     try {
+      if (loadingData) throw new Error('กำลังโหลดข้อมูล กรุณารอสักครู่');
       setPageError('');
       setSuccessMessage('');
       setScannerMessage('');
@@ -551,6 +572,7 @@ export default function Home() {
 
       if (error) throw new Error(error.message);
 
+      if (requestId !== attendanceRequestId.current) return;
       setAttendanceMap((prev) => ({
         ...prev,
         [scannedStudentId]: 'P',
@@ -564,6 +586,7 @@ export default function Home() {
       setScannerMessage(message);
       setSuccessMessage(message);
     } catch (err) {
+      if (requestId !== attendanceRequestId.current) return;
       const message = err.message || 'สแกนไม่สำเร็จ';
       setScannerMessage(message);
       setPageError(message);
@@ -571,7 +594,9 @@ export default function Home() {
   }
 
   async function saveAttendance() {
+    const requestId = attendanceRequestId.current;
     try {
+      if (loadingData) throw new Error('กำลังโหลดข้อมูล กรุณารอสักครู่');
       setSaving(true);
       setPageError('');
       setSuccessMessage('');
@@ -631,6 +656,7 @@ export default function Home() {
 
       if (error) throw new Error(error.message);
 
+      if (requestId !== attendanceRequestId.current) return;
       setSuccessMessage(`บันทึกการเช็กชื่อสำเร็จ ${rows.length} รายการ`);
       await loadAttendancePage(selectedRoomId, selectedDate);
     } catch (err) {
@@ -647,9 +673,12 @@ export default function Home() {
           <section className="w-full rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200 sm:p-8">
             <div className="mb-6 text-center">
               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
-                <img
+                <Image
                   src={LOGO_SRC}
                   alt="EP Logo"
+                  width={64}
+                  height={64}
+                  priority
                   className="h-full w-full object-contain p-0"
                   style={{
                     transform: 'scale(1.9)',
@@ -868,7 +897,7 @@ export default function Home() {
             <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">
               <button
                 onClick={() => setScannerOpen(true)}
-                disabled={students.length === 0}
+                disabled={loadingData || saving || students.length === 0}
                 className="rounded-full bg-sky-600 px-4 py-3 text-sm font-bold text-white hover:bg-sky-700 disabled:opacity-50 md:py-2"
               >
                 สแกน QR / Barcode
@@ -876,7 +905,7 @@ export default function Home() {
 
               <button
                 onClick={markAllPresent}
-                disabled={students.length === 0}
+                disabled={loadingData || saving || students.length === 0}
                 className="rounded-full bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50 md:py-2"
               >
                 มาเข้าแถวทั้งหมด
@@ -884,7 +913,7 @@ export default function Home() {
 
               <button
                 onClick={markAllAbsent}
-                disabled={students.length === 0}
+                disabled={loadingData || saving || students.length === 0}
                 className="rounded-full bg-red-600 px-4 py-3 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50 md:py-2"
               >
                 ขาดทั้งหมด
@@ -892,7 +921,7 @@ export default function Home() {
 
               <button
                 onClick={clearAllStatus}
-                disabled={students.length === 0}
+                disabled={loadingData || saving || students.length === 0}
                 className="rounded-full bg-slate-200 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-300 disabled:opacity-50 md:py-2"
               >
                 ล้างสถานะ
@@ -982,6 +1011,8 @@ function ScannerModal({ onClose, onScan, message, setMessage }) {
     return () => {
       stopCamera();
     };
+    // Camera startup is tied to modal mount, not parent callback identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function startCamera() {
@@ -1238,11 +1269,7 @@ function CustomThaiCalendar({ value, onChange, room }) {
     }
   }, [value]);
 
-  useEffect(() => {
-    loadCalendarMonth();
-  }, [displayMonth, scheduleGroup, roomId]);
-
-  async function loadCalendarMonth() {
+  const loadCalendarMonth = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -1300,7 +1327,11 @@ function CustomThaiCalendar({ value, onChange, room }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [displayMonth, scheduleGroup, roomId]);
+
+  useEffect(() => {
+    loadCalendarMonth();
+  }, [loadCalendarMonth]);
 
   function goPrevMonth() {
     setDisplayMonth(addMonthsToMonthKey(displayMonth, -1));
@@ -2006,71 +2037,6 @@ function createEmptyStudentStat() {
   };
 }
 
-function normalizeStatus(status) {
-  const text = String(status || '').trim().toUpperCase();
-
-  if (text === 'P' || text === 'PRESENT' || text === 'มา' || text === 'TRUE') {
-    return 'P';
-  }
-
-  if (text === 'A' || text === 'ABSENT' || text === 'ขาด' || text === 'FALSE') {
-    return 'A';
-  }
-
-  return '';
-}
-
-function normalizeScanStudentId(value) {
-  const text = String(value || '').trim();
-
-  if (!text) return '';
-
-  const direct = text.replace(/\s+/g, '');
-
-  if (/^\d+$/.test(direct)) {
-    return direct;
-  }
-
-  const match = text.match(/\d{6,20}/);
-
-  return match ? match[0] : direct;
-}
-
-function applyRoomExceptionToSchoolDay({ schoolDay, roomExceptions }) {
-  const dateText = String(schoolDay?.date || '').slice(0, 10);
-  const termId = String(schoolDay?.term_id || '');
-  const weekday = getWeekdayFromYmd(dateText);
-
-  const activeExceptions = (roomExceptions || []).filter(
-    (item) => isActiveValue(item.active) && String(item.term_id || '') === termId
-  );
-
-  const exactDateException = activeExceptions.find(
-    (item) =>
-      item.exception_type === 'DATE' &&
-      String(item.date || '').slice(0, 10) === dateText
-  );
-
-  const weekdayException = activeExceptions.find(
-    (item) =>
-      item.exception_type === 'WEEKDAY' &&
-      Number(item.weekday) === Number(weekday)
-  );
-
-  const exception = exactDateException || weekdayException;
-
-  if (!exception) return schoolDay;
-
-  return {
-    ...schoolDay,
-    is_lineup_day: exception.is_lineup_day,
-    note: exception.note || schoolDay.note || '',
-    room_exception_id: exception.id,
-    room_exception_type: exception.exception_type,
-    room_exception_note: exception.note || '',
-  };
-}
-
 function getCalendarSelectedText(selectedInfo) {
   if (!selectedInfo) return 'คลิกเพื่อเลือกวันที่';
 
@@ -2087,18 +2053,6 @@ function getCalendarSelectedText(selectedInfo) {
     : selectedInfo.note || 'วันหยุด / ไม่เข้าแถว';
 }
 
-function parseRoomIds(roomIdsText) {
-  const text = String(roomIdsText || '').trim();
-
-  if (!text) return [];
-  if (text.toUpperCase() === 'ALL') return ['ALL'];
-
-  return text
-    .split(/[,;|\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 function getSelectedRoomName(rooms, roomId) {
   const room = rooms.find((item) => item.room_id === roomId);
   return room?.room_name || roomId || '-';
@@ -2111,17 +2065,6 @@ function getTodayYmd() {
   const dd = String(now.getDate()).padStart(2, '0');
 
   return `${yyyy}-${mm}-${dd}`;
-}
-
-function getWeekdayFromYmd(ymd) {
-  const [yearText, monthText, dayText] = String(ymd || '').split('-');
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
-
-  if (!year || !month || !day) return null;
-
-  return new Date(year, month - 1, day).getDay();
 }
 
 function formatThaiDate(ymd) {
