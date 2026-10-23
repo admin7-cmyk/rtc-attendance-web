@@ -42,7 +42,6 @@ export default function DailyHistoryPage() {
       }
 
       setCurrentUser(parsed);
-      loadDailyHistory(selectedDate);
     } catch {
       localStorage.removeItem('rtc_attendance_user');
       setPageError('ข้อมูลผู้ใช้ไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่');
