@@ -1,0 +1,19 @@
+{
+  "runtime": "Human 3.3.6 / TensorFlow.js",
+  "model": {
+    "version": "hse-faceres-human-3.3.6-embedding-only",
+    "dimension": 1024,
+    "inputSize": 224,
+    "metric": "cosine",
+    "assetHashes": {
+      "blazeface.bin": "dc9a97fdc50bc43216554bdd69aa3e7b9361a519ee7bdd996a2f69a98a6f9b72",
+      "blazeface.json": "cd7bbfc078270572beb39f9e5ae67aadbd50b5e67cff37e6d4f6b3ea39312e5f",
+      "facemesh.bin": "3826da640b0a3021161605369ee6af293f75d518040355b960ec71a3390c1c0b",
+      "facemesh.json": "b60ca26f404724f43bd2b1575761d8265180e1f053cc0731caa68462927309e7",
+      "faceres.bin": "2c7d2d62b76c97528b736527aa09d310ea71743c9e3e79fb6c62d4b2d73af79b",
+      "faceres.json": "5b83d49c0385d2e68a05122441b94226313677cae9fcc40b9587ad50079eb4df"
+    }
+  },
+  "scriptIntegrity": "sha256-XyQOXS1gRZ8HqqffLLEp/T+VTHjdBVgc9vijBkZ3kBM=",
+  "calibration": "LAB ONLY: uncalibrated; not approved for attendance"
+}
