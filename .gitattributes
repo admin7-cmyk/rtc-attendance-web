@@ -1,0 +1,3 @@
+# Preserve upstream asset bytes: manifest hashes and browser SRI depend on them.
+/public/models/face/** -text
+/public/vendor/human/** -text
