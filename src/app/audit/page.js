@@ -47,6 +47,8 @@ export default function AuditPage() {
       setPageError('ข้อมูลผู้ใช้ไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่');
       setLoading(false);
     }
+    // loadBootstrap intentionally runs once after local session hydration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const roomNameMap = useMemo(() => {

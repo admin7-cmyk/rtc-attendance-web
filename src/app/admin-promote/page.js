@@ -418,31 +418,26 @@ export default function AdminPromotePage() {
         };
       });
 
-      for (const row of studentUpdateRows) {
-        const { student_id, ...updateData } = row;
-
-        const { error } = await supabase
-          .from('students')
-          .update(updateData)
-          .eq('student_id', student_id);
-
-        if (error) {
-          throw new Error(error.message);
-        }
-      }
-
-      for (const teacher of teacherPreviewRows) {
-        const { error } = await supabase
-          .from('app_users')
-          .update({
-            room_ids: teacher.new_room_ids,
-          })
-          .eq('teacher_id', teacher.teacher_id);
-
-        if (error) {
-          throw new Error(error.message);
-        }
-      }
+      const response = await fetch('/api/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          students: studentUpdateRows.map(({ student_id, ...after }) => {
+            const previous = students.find((student) => String(student.student_id) === String(student_id));
+            return { student_id, before: Object.fromEntries(
+              ['level', 'year', 'room_no', 'room_id', 'active'].map((field) => [field, String(previous?.[field] ?? '')])
+            ), after };
+          }),
+          teachers: teacherPreviewRows.map((teacher) => {
+            const previous = users.find((user) => user.teacher_id === teacher.teacher_id);
+            return { teacher_id: teacher.teacher_id,
+              before: Object.fromEntries(['room_ids', 'role', 'active'].map((field) => [field, String(previous?.[field] ?? '')])),
+              after: { room_ids: teacher.new_room_ids } };
+          }),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'ไม่สามารถเลื่อนชั้นได้');
 
       setSuccessMessage(
         `ดำเนินการสำเร็จ นักเรียน ${studentUpdateRows.length} รายการ / ครูตามห้องใหม่ ${overview.teachersFollowRoom} คน / ครูรอจัดห้อง ${overview.teachersWaiting} คน ${

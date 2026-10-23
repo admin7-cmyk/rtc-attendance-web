@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import AppNav from '@/components/AppNav';
+import {
+  getRiskLevelFromAbsentPercent,
+  parseRoomIds,
+} from '@/lib/attendanceLogic.mjs';
 
 export default function SummaryPage() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -43,6 +47,8 @@ export default function SummaryPage() {
     if (currentUser && selectedTermId) {
       loadSummary();
     }
+    // Summary reloads are intentionally keyed by user, term, and selected room.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, selectedTermId, selectedRoomId]);
 
   const overview = useMemo(() => {
@@ -480,17 +486,6 @@ function SummaryCard({ title, value, unit }) {
   );
 }
 
-function getRiskLevelFromAbsentPercent(value) {
-  const percent = Number(value || 0);
-
-  if (percent >= 20) return 'ตกกิจกรรม';
-  if (percent >= 15) return 'เสี่ยงสูงมาก';
-  if (percent >= 10) return 'เสี่ยงสูง';
-  if (percent >= 5) return 'เฝ้าระวัง';
-
-  return '';
-}
-
 function RiskBadge({ risk }) {
   const text = String(risk || '');
 
@@ -531,19 +526,6 @@ function RiskBadge({ risk }) {
       ปกติ
     </span>
   );
-}
-
-function parseRoomIds(roomIdsText) {
-  const text = String(roomIdsText || '').trim();
-
-  if (!text) return [];
-
-  if (text.toUpperCase() === 'ALL') return ['ALL'];
-
-  return text
-    .split(/[,;|\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function formatPercent(value) {

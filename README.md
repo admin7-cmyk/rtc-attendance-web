@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# RTC Attendance Web
 
-## Getting Started
+Next.js app for school lineup attendance, room/student administration, imports,
+daily status, audit logs, backups, and Excel/Word reporting.
 
-First, run the development server:
+## Scripts
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run lint
+npm run test
+npm run build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Environment
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+Copy `.env.example` to `.env.local` and fill in the Supabase values.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SESSION_SECRET` for stable signed sessions across Vercel instances
+- `SUPABASE_SERVICE_ROLE_KEY` for server data access and atomic promotions
 
-## Learn More
+Never expose the service role key in client code.
 
-To learn more about Next.js, take a look at the following resources:
+Browser queries now go through verified server routes. See `DEPLOYMENT.md` for
+the GitHub/Vercel/Supabase rollout order; public database access must be closed
+only after the server-key deployment has been verified.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+User PINs are stored in the existing `app_users.pin` column. New saves/imports
+write PBKDF2-SHA256 hashes, and legacy plaintext PINs are still accepted during
+login for migration.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Supabase
 
-## Deploy on Vercel
+Database artifacts live in `supabase/`.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `supabase/migrations/20260805000000_initial_schema.sql` contains the inferred app schema, summary views, indexes, and attendance audit trigger.
+- `supabase/rls_hardening_template.sql` contains policy scaffolding for a future authenticated/RLS-backed version of the app.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Review migrations against the live database before applying them to production.

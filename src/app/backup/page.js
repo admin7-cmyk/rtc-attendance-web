@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import ExcelJS from 'exceljs';
 import { supabase } from '@/lib/supabase';
 import AppNav from '@/components/AppNav';
+import { normalizeStoredPin } from '@/lib/pinHash.mjs';
 
 const PAGE_SIZE = 1000;
 
@@ -167,7 +168,7 @@ export default function BackupPage() {
   async function handleBackupExcel() {
     try {
       const confirmBackup = window.confirm(
-        'ต้องการสำรองฐานข้อมูลเป็นไฟล์ Excel ใช่ไหม?\n\nหมายเหตุ: ไฟล์นี้อาจมีข้อมูลผู้ใช้และ PIN ควรเก็บไว้ในที่ปลอดภัย'
+        'ต้องการสำรองฐานข้อมูลเป็นไฟล์ Excel ใช่ไหม?\n\nหมายเหตุ: ไฟล์นี้มีข้อมูลผู้ใช้ ควรเก็บไว้ในที่ปลอดภัย'
       );
 
       if (!confirmBackup) return;
@@ -197,11 +198,15 @@ export default function BackupPage() {
         const rows = await fetchAllRows((from, to) =>
           supabase.from(table.tableName).select('*').range(from, to)
         );
+        const exportRows =
+          table.tableName === 'app_users'
+            ? await Promise.all(rows.map(normalizeBackupUserRow))
+            : rows;
 
         buildDataSheet({
           workbook,
           table,
-          rows,
+          rows: exportRows,
           backupTimeText,
         });
       }
@@ -706,4 +711,11 @@ function formatFileDateTime(date) {
   const second = pad(date.getSeconds());
 
   return `${year}${month}${day}_${hour}${minute}${second}`;
+}
+
+async function normalizeBackupUserRow(row) {
+  return {
+    ...row,
+    pin: await normalizeStoredPin(row.pin),
+  };
 }

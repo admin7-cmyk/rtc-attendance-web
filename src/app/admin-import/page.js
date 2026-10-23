@@ -4,6 +4,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ExcelJS from 'exceljs';
 import { supabase } from '@/lib/supabase';
 import AppNav from '@/components/AppNav';
+import {
+  buildAttendanceId,
+  cleanText,
+  getMonthKey,
+  normalizeDate,
+  normalizeRoomId,
+  normalizeStatus,
+  parseRoomIds,
+} from '@/lib/attendanceLogic.mjs';
+import { normalizeStoredPin } from '@/lib/pinHash.mjs';
 
 const PAGE_SIZE = 1000;
 
@@ -452,10 +462,14 @@ export default function AdminImportPage() {
 
       const rowsToSave =
         importMode === IMPORT_MODES.INSERT_ONLY
-          ? previewRows
-              .filter((item) => item.status === 'NEW')
-              .map((item) => prepareRowForSave(item.data, importType))
-          : previewRows.map((item) => prepareRowForSave(item.data, importType));
+          ? await Promise.all(
+              previewRows
+                .filter((item) => item.status === 'NEW')
+                .map((item) => prepareRowForSave(item.data, importType))
+            )
+          : await Promise.all(
+              previewRows.map((item) => prepareRowForSave(item.data, importType))
+            );
 
       if (rowsToSave.length === 0) {
         throw new Error('ไม่มีรายการใหม่สำหรับบันทึก เพราะรายการทั้งหมดมีอยู่ในระบบแล้ว');
@@ -1238,7 +1252,7 @@ function validateRow({
   return errors;
 }
 
-function prepareRowForSave(row, importType) {
+async function prepareRowForSave(row, importType) {
   if (importType === 'students') {
     return {
       student_id: cleanText(row.student_id),
@@ -1257,7 +1271,7 @@ function prepareRowForSave(row, importType) {
     return {
       teacher_id: cleanText(row.teacher_id),
       username: cleanText(row.username),
-      pin: cleanText(row.pin),
+      pin: await normalizeStoredPin(row.pin),
       name: cleanText(row.name),
       role: cleanText(row.role).toLowerCase(),
       room_ids:
@@ -1373,12 +1387,6 @@ function normalizeHeader(value) {
   return cleanText(value).toLowerCase();
 }
 
-function cleanText(value) {
-  if (value === null || value === undefined) return '';
-
-  return String(value).trim();
-}
-
 function normalizeActive(value) {
   const text = cleanText(value).toUpperCase();
 
@@ -1392,38 +1400,7 @@ function normalizeActive(value) {
 }
 
 function normalizeAttendanceStatus(value) {
-  const text = cleanText(value).toUpperCase();
-
-  if (['P', 'มา', 'มาเรียน', 'PRESENT', 'TRUE', '1'].includes(text)) {
-    return 'P';
-  }
-
-  if (['A', 'ขาด', 'ABSENT', 'FALSE', '0'].includes(text)) {
-    return 'A';
-  }
-
-  return text;
-}
-
-function parseRoomIds(roomIdsText) {
-  const text = cleanText(roomIdsText);
-
-  if (!text) return [];
-
-  if (text.toUpperCase() === 'ALL') return ['ALL'];
-
-  return text
-    .split(/[,;|\s]+/)
-    .map((item) => cleanText(item))
-    .filter(Boolean);
-}
-
-function normalizeRoomId(value) {
-  return cleanText(value)
-    .normalize('NFKC')
-    .replace(/\s+/g, '')
-    .replace(/\./g, '')
-    .replace(/-/g, '/');
+  return normalizeStatus(value) || cleanText(value).toUpperCase();
 }
 
 function inferLevelFromRoomId(roomId) {
@@ -1467,45 +1444,6 @@ function makeSchoolDayKey(day) {
     cleanText(day.term_id),
     cleanText(day.schedule_group),
   ].join('|');
-}
-
-function normalizeDate(value) {
-  const text = cleanText(value);
-
-  if (!text) return '';
-
-  if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
-    return text.slice(0, 10);
-  }
-
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(text)) {
-    const [dayText, monthText, yearText] = text.split('/');
-    let year = Number(yearText);
-
-    if (year > 2400) year -= 543;
-
-    return `${year}-${String(monthText).padStart(2, '0')}-${String(dayText).padStart(2, '0')}`;
-  }
-
-  return text.slice(0, 10);
-}
-
-function getMonthKey(ymd) {
-  const date = normalizeDate(ymd);
-
-  if (!date || date.length < 7) return '';
-
-  return date.slice(0, 7);
-}
-
-function buildAttendanceId(date, roomId, studentId) {
-  const safeDate = normalizeDate(date);
-  const safeRoomId = cleanText(roomId);
-  const safeStudentId = cleanText(studentId);
-
-  if (!safeDate || !safeRoomId || !safeStudentId) return '';
-
-  return `${safeDate}_${safeRoomId}_${safeStudentId}`;
 }
 
 function formatDateObjectToYmd(date) {

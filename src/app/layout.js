@@ -1,4 +1,5 @@
 import './globals.css';
+import SessionGate from '@/components/SessionGate';
 
 export const metadata = {
   title: 'ระบบเช็กชื่อเข้าแถว',
@@ -9,7 +10,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="th">
-      <body>{children}</body>
+      <body><SessionGate>{children}</SessionGate></body>
     </html>
   );
 }
