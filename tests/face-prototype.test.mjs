@@ -26,6 +26,19 @@ test('several faces require distinct fresh observations before one suggestion ea
   assert.deepEqual(m.update([obs('x', [1, 0], 300), obs('y', [0, 1], 300)]).map(x => x.studentId), ['A', 'B']);
   assert.deepEqual(m.update([obs('x', [1, 0], 400)]), []);
 });
+
+test('one volunteer can match after fresh repeated observations while unknown and duplicate faces stay unresolved', () => {
+  const one = () => matcher({ templates: [templates[0]] });
+  const m = one();
+  assert.deepEqual(m.update([obs('x', [-1, 0], 100)]), []);
+  assert.deepEqual(m.update([obs('x', [1, 0], 200)]), []);
+  assert.deepEqual(m.update([obs('x', [1, 0], 300)]), []);
+  assert.deepEqual(m.update([obs('x', [1, 0], 400)]).map(x => x.studentId), ['A']);
+  const conflict = one();
+  for (const time of [100, 200, 300, 400]) {
+    assert.deepEqual(conflict.update([obs('x', [1, 0], time), obs('y', [1, 0], time)]), []);
+  }
+});
 test('unknown, low-quality, malformed and conflicting faces do not mark anyone', () => {
   const m = matcher({ policy: { ...policy, minObservations: 1 } });
   assert.deepEqual(m.update([obs('x', [-1, 0], 1)]), []);
