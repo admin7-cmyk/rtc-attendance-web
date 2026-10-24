@@ -66,6 +66,19 @@ function cameraFixture() {
   const video = { srcObject: null, readyState: 4, videoWidth: 640, play: async () => {}, pause() {} };
   return { stream, doc, video, stopped: () => stopped, hide() { doc.hidden = true; listeners.get('visibilitychange')?.(); } };
 }
+
+test('camera selection requests the chosen side and releases the old stream before reopening', async () => {
+  for (const facingMode of ['environment', 'user']) {
+    const f = cameraFixture(); let requested;
+    const c = await startFaceCamera({ video: f.video, facingMode, documentTarget: f.doc,
+      mediaDevices: { getUserMedia: async constraints => { requested = constraints; return f.stream; } },
+      onFrame: async () => [], onResult() {}, onError() {} });
+    c.stop();
+    assert.equal(f.stopped(), 1);
+    assert.equal(requested.video.facingMode.ideal, facingMode);
+    assert.equal(requested.audio, false);
+  }
+});
 test('camera stop releases tracks and suppresses in-flight results', async () => {
   const f = cameraFixture(); let finish; let frames = 0;
   const camera = await startFaceCamera({ video: f.video, mediaDevices: { getUserMedia: async () => f.stream }, documentTarget: f.doc, onFrame: () => new Promise(r => { finish = r; }), onResult: () => frames++, onError: e => { throw e; } });
