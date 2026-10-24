@@ -1,4 +1,4 @@
-export async function startFaceCamera({ video, signal, onFrame, onResult, onError, onStop = () => {}, mediaDevices = globalThis.navigator?.mediaDevices, documentTarget = globalThis.document, intervalMs = 200 }) {
+export async function startFaceCamera({ video, signal, onFrame, onResult, onError, onStop = () => {}, mediaDevices = globalThis.navigator?.mediaDevices, documentTarget = globalThis.document, intervalMs = 200, facingMode = 'environment' }) {
   if (!mediaDevices?.getUserMedia) throw new Error('เบราว์เซอร์นี้เปิดกล้องไม่ได้ กรุณาใช้ HTTPS และอนุญาตกล้อง');
   let stopped = false; let stream; let timer; let started = false;
   function stop() {
@@ -15,7 +15,7 @@ export async function startFaceCamera({ video, signal, onFrame, onResult, onErro
   documentTarget?.addEventListener('visibilitychange', visibility);
   try {
     if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-    stream = await mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15, max: 24 } } });
+    stream = await mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: facingMode === 'user' ? 'user' : 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15, max: 24 } } });
     if (stopped || signal?.aborted || documentTarget?.hidden) {
       stream.getTracks().forEach(track => track.stop());
       throw new DOMException('Cancelled', 'AbortError');
