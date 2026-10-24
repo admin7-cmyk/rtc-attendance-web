@@ -19,6 +19,7 @@ export default function FaceLab() {
   const [roster, setRoster] = useState([]); const [present, setPresent] = useState([]); const [alias, setAlias] = useState('');
   const [mode, setMode] = useState('detect'); const [stats, setStats] = useState({ frames: 0, ms: 0, maxFaces: 0 });
   const [dimensions, setDimensions] = useState({ width: 1280, height: 720 });
+  const [facingMode, setFacingMode] = useState('environment');
 
   function stop() {
     controller.current?.abort(); camera.current?.stop(); camera.current = null;
@@ -39,7 +40,7 @@ export default function FaceLab() {
       matcher.current = createMatcher({ templates: samples.current, policy: trialPolicy, scope: { roomId: 'lab-only', date: 'test', generation: Date.now() }, modelVersion: runtime.current.model.version });
       setStats({ frames: 0, ms: 0, maxFaces: 0 });
       camera.current = await startFaceCamera({
-        video: video.current, signal: abort.signal,
+        video: video.current, signal: abort.signal, facingMode,
         onFrame: async input => {
           const started = performance.now(); const observations = await runtime.current.infer(input);
           return { observations, ms: performance.now() - started, width: input.videoWidth, height: input.videoHeight };
@@ -102,7 +103,9 @@ export default function FaceLab() {
       <section className="space-y-3 rounded-2xl bg-white p-4">
         <label className="flex gap-3"><input type="checkbox" checked={approved} disabled={running || busy} onChange={e => setApproved(e.target.checked)} /><span>ผู้ร่วมทดลองอนุญาตแล้ว และจะไม่เก็บภาพบุคคลอื่นที่ไม่ได้อนุญาต</span></label>
         <label className="block">โหมดทดลอง <select className="ml-2 rounded border p-2" value={mode} disabled={running || busy} onChange={e => setMode(e.target.value)}><option value="detect">ตรวจจับ / เก็บตัวอย่างทีละคน</option><option value="match">เทียบหลายคนกับตัวอย่างชั่วคราว</option></select></label>
-        <div className="flex flex-wrap gap-2"><button className={button} disabled={!approved || running || busy || (mode === 'match' && roster.length < 2)} onClick={start}>{busy ? 'กำลังเตรียม…' : 'เปิดกล้องหลัง'}</button><button className={button} disabled={!running && !busy} onClick={stop}>หยุดกล้อง</button><button className={button} onClick={clear}>ล้างข้อมูลทดลอง</button><button className={button} disabled={running || busy} onClick={testModels}>ทดสอบโมเดลด้วยภาพว่าง</button></div>
+        <label className="block">เลือกกล้อง <select className="ml-2 rounded border p-2" value={facingMode} disabled={busy} onChange={e => { stop(); setFacingMode(e.target.value); }}><option value="environment">กล้องหลัง</option><option value="user">กล้องหน้า</option></select></label>
+        <p className="text-sm text-slate-600">เปลี่ยนกล้องแล้วกดเปิดกล้องอีกครั้ง ตัวอย่างที่เก็บไว้ยังอยู่ หากอุปกรณ์มีกล้องเดียว เบราว์เซอร์อาจใช้กล้องที่มี</p>
+        <div className="flex flex-wrap gap-2"><button className={button} disabled={!approved || running || busy || (mode === 'match' && roster.length < 2)} onClick={start}>{busy ? 'กำลังเตรียม…' : (facingMode === 'user' ? 'เปิดกล้องหน้า' : 'เปิดกล้องหลัง')}</button><button className={button} disabled={!running && !busy} onClick={stop}>หยุดกล้อง</button><button className={button} onClick={clear}>ล้างข้อมูลทดลอง</button><button className={button} disabled={running || busy} onClick={testModels}>ทดสอบโมเดลด้วยภาพว่าง</button></div>
         <p role="status" aria-live="polite">{message}</p>
       </section>
       <div className="relative overflow-hidden rounded-2xl bg-black" style={{ aspectRatio: `${dimensions.width}/${dimensions.height}` }}>
